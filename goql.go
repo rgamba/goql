@@ -185,47 +185,7 @@ func (qb *QueryBuilder) GetValues() []interface{} {
 
 // Build generates the resulting SQL of the query builder
 func (qb *QueryBuilder) Build() string {
-	qb.Sql = ""
-	// SELECT
-	if len(qb.columns) > 0 {
-		qb.Sql = `SELECT ` + strings.Join(qb.columns, `,`) + ` `
-	} else {
-		qb.Sql = "SELECT * "
-	}
-	// FROM
-	//frm := strings.Split(qb.from, ".")
-	qb.Sql += `FROM ` + qb.from + ` `
-	if len(qb.SelectAlias) > 0 {
-		qb.Sql += qb.SelectAlias + " "
-	}
-	// INNER JOIN
-	if len(qb.innerJoin) > 0 {
-		qb.Sql += "INNER JOIN " + strings.Join(qb.innerJoin, " INNER JOIN ") + " "
-	}
-	// LEFT JOIN
-	if len(qb.leftJoin) > 0 {
-		qb.Sql += "LEFT JOIN " + strings.Join(qb.leftJoin, " LEFT JOIN ") + " "
-	}
-	// WHERE
-	if len(qb.where) > 0 {
-		qb.Sql += "WHERE " + strings.Join(qb.where, " AND ") + " "
-	}
-	// GROUP BY
-	if len(qb.groupBy) > 0 {
-		qb.Sql += "GROUP BY " + strings.Join(qb.groupBy, ", ") + " "
-	}
-	// HAVING
-	if len(qb.having) > 0 {
-		qb.Sql += "HAVING " + strings.Join(qb.having, " AND ") + " "
-	}
-	// ORDER BY
-	if len(qb.orderBy) > 0 {
-		qb.Sql += "ORDER BY " + strings.Join(qb.orderBy, ", ") + " "
-	}
-	// LIMIT
-	if len(qb.limit) > 0 {
-		qb.Sql += "LIMIT " + qb.limit
-	}
+	qb.Sql = qb.buildSQL()
 
 	vals := qb.GetValues()
 	if len(vals) > 0 {
@@ -235,6 +195,90 @@ func (qb *QueryBuilder) Build() string {
 	}
 
 	return qb.Sql
+}
+
+func (qb *QueryBuilder) buildSQL() string {
+	parts := []string{
+		qb.buildSelect(),
+		qb.buildFrom(),
+		qb.buildInnerJoin(),
+		qb.buildLeftJoin(),
+		qb.buildWhere(),
+		qb.buildGroupBy(),
+		qb.buildHaving(),
+		qb.buildOrderBy(),
+		qb.buildLimit(),
+	}
+	for i, sql := range parts {
+		if strings.Trim(sql, " ") == "" {
+			parts = append(parts[:i], parts[i:]...)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func (qb *QueryBuilder) buildSelect() string {
+	if len(qb.columns) > 0 {
+		return `SELECT ` + strings.Join(qb.columns, `,`)
+	}
+	return "SELECT * "
+}
+
+func (qb *QueryBuilder) buildFrom() string {
+	result := `FROM ` + qb.from
+	if len(qb.SelectAlias) > 0 {
+		result += " " + qb.SelectAlias
+	}
+	return result
+}
+
+func (qb *QueryBuilder) buildInnerJoin() string {
+	if len(qb.innerJoin) > 0 {
+		return "INNER JOIN " + strings.Join(qb.innerJoin, " INNER JOIN ")
+	}
+	return ""
+}
+
+func (qb *QueryBuilder) buildLeftJoin() string {
+	if len(qb.leftJoin) > 0 {
+		return "LEFT JOIN " + strings.Join(qb.leftJoin, " LEFT JOIN ")
+	}
+	return ""
+}
+
+func (qb *QueryBuilder) buildWhere() string {
+	if len(qb.where) > 0 {
+		return "WHERE " + strings.Join(qb.where, " AND ")
+	}
+	return ""
+}
+
+func (qb *QueryBuilder) buildGroupBy() string {
+	if len(qb.groupBy) > 0 {
+		return "GROUP BY " + strings.Join(qb.groupBy, ", ")
+	}
+	return ""
+}
+
+func (qb *QueryBuilder) buildHaving() string {
+	if len(qb.having) > 0 {
+		return "HAVING " + strings.Join(qb.having, " AND ")
+	}
+	return ""
+}
+
+func (qb *QueryBuilder) buildOrderBy() string {
+	if len(qb.orderBy) > 0 {
+		return "ORDER BY " + strings.Join(qb.orderBy, ", ")
+	}
+	return ""
+}
+
+func (qb *QueryBuilder) buildLimit() string {
+	if len(qb.limit) > 0 {
+		return "LIMIT " + qb.limit
+	}
+	return ""
 }
 
 // BuildCount is the same as Build() with the difference that

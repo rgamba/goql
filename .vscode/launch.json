@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "remotePath": "",
+            "port": 2345,
+            "host": "127.0.0.1",
+            "program": "${workspaceRoot}",
+            "env": {
+                "GOROOT": "/usr/local/go",
+                "GOPATH": "/Users/rgamba/go"
+            },
+            "args": [],
+            "showLog": true
+        }
+    ]
+}
