@@ -1,5 +1,7 @@
 # goql
 
+[![Build Status](https://travis-ci.org/rgamba/goql.svg?branch=master)](https://travis-ci.org/rgamba/goql)
+
 goql is a super fast and easy to use query builder and database table to struct modeling convention.
 It is like an ORM but it just gets out of your way and let's you keep control of your queries.
 
