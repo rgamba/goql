@@ -1,10 +1,13 @@
 package goql
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
 	"strings"
+	"time"
 
 	"database/sql"
 )
@@ -301,4 +304,238 @@ func GetFieldPointers(obj interface{}) []interface{} {
 		}
 	}
 	return fields
+}
+
+// Insert inserts a new record in a table
+// The fields in the structure obj must be added the
+// "db" tag in the declaration of the structure
+func Insert(Db interface{}, table string, obj interface{}) (pks interface{}, err error) {
+	var dbType string
+	switch Db.(type) {
+	case *sql.DB:
+		dbType = "db"
+	case *sql.Tx:
+		dbType = "tx"
+	default:
+		panic("invalid db type struct")
+	}
+
+	t := reflect.TypeOf(obj)
+	v := reflect.ValueOf(obj)
+	num := t.NumField()
+
+	if num <= 0 {
+		return nil, errors.New("obj has no properties")
+	}
+	// Create the query
+	qFields := []string{}
+	qNums := []string{}
+	qVals := []interface{}{}
+	j := 1
+	pk := ""
+
+	for i := 0; i <= num-1; i++ {
+		fType := t.Field(i)
+		fVal := v.Field(i)
+		// Check if the field is calculated
+		if len(fType.Tag.Get("sql")) > 0 {
+			continue
+		}
+		if len(fType.Tag.Get("pk")) > 0 {
+			pk = fType.Tag.Get("db")
+			continue
+		}
+		// Check for the database field tag
+		if len(fType.Tag.Get("db")) <= 0 {
+			continue
+		}
+		// Special tags
+		var appendVal interface{}
+		switch fType.Tag.Get("type") {
+		case "time":
+			tme, ok := fVal.Interface().(time.Time)
+			if ok {
+				appendVal = tme.Format("15:04:05")
+			}
+		case "json":
+			var m interface{}
+			if fVal.Interface() == nil {
+				m = nil
+			} else {
+				m, err = json.Marshal(fVal.Interface())
+			}
+			if err == nil {
+				appendVal = m
+			}
+		default:
+			appendVal = fVal.Interface()
+		}
+		qVals = append(qVals, appendVal)
+		qFields = append(qFields, fType.Tag.Get("db"))
+
+		qNums = append(qNums, fmt.Sprintf("$%d", j))
+		j++
+	}
+	// Build the query
+	qry := fmt.Sprintf(`INSERT INTO %s ("%s") VALUES(%s)`, table, strings.Join(qFields, `","`), strings.Join(qNums, ","))
+	err = nil
+	if len(pk) > 0 {
+		qry += fmt.Sprintf(` RETURNING "%s"`, pk)
+		fmt.Println(qry)
+		fmt.Println(qVals...)
+		if dbType == "db" {
+			err = Db.(*sql.DB).QueryRow(qry, qVals...).Scan(&pks)
+		} else {
+			err = Db.(*sql.Tx).QueryRow(qry, qVals...).Scan(&pks)
+		}
+
+	} else {
+		if dbType == "db" {
+			_, err = Db.(*sql.DB).Exec(qry, qVals...)
+		} else {
+			_, err = Db.(*sql.Tx).Exec(qry, qVals...)
+		}
+
+	}
+	// Validate the result
+	if err != nil {
+		return nil, err
+	}
+	return pks, nil
+}
+
+// Update updates a record. Note that this only works for atomic updates
+// and not for massive updates. The field with primary tag will serve as
+// update reference, in case there is no field with primary, the update will fail
+func Update(Db interface{}, table string, obj interface{}) error {
+	var dbType string
+	switch Db.(type) {
+	case *sql.DB:
+		dbType = "db"
+	case *sql.Tx:
+		dbType = "tx"
+	default:
+		panic("invalid db type struct")
+	}
+
+	t := reflect.TypeOf(obj)
+	v := reflect.ValueOf(obj)
+	num := t.NumField()
+
+	if num <= 0 {
+		return errors.New("obj has no properties")
+	}
+	// Create the query
+	qFields := []string{}
+	qVals := []interface{}{}
+	j := 1
+	pk := []string{}
+
+	for i := 0; i <= num-1; i++ {
+		fType := t.Field(i)
+		fVal := v.Field(i)
+		// Check for the database field tag
+		if len(fType.Tag.Get("db")) <= 0 {
+			continue
+		}
+		// Check if the field is calculated
+		if len(fType.Tag.Get("sql")) > 0 {
+			continue
+		}
+		if len(fType.Tag.Get("pk")) > 0 {
+			pk = append(pk, fmt.Sprintf(`"%s" = $%d`, fType.Tag.Get("db"), j))
+		} else {
+			qFields = append(qFields, fmt.Sprintf(`"%s" = $%d`, fType.Tag.Get("db"), j))
+		}
+
+		// Special tags
+		var appendVal interface{}
+		switch fType.Tag.Get("type") {
+		case "time":
+			tme, ok := fVal.Interface().(time.Time)
+			if ok {
+				appendVal = tme.Format("15:04:05")
+			}
+		case "json":
+			m, err := json.Marshal(fVal.Interface())
+			if err == nil {
+				appendVal = m
+			}
+		default:
+			appendVal = fVal.Interface()
+		}
+
+		qVals = append(qVals, appendVal)
+		j++
+	}
+
+	if len(pk) <= 0 {
+		return errors.New("there is no primary key in the structure")
+	}
+
+	// Build the query
+	qry := fmt.Sprintf(`UPDATE %s SET %s WHERE (%s)`, table, strings.Join(qFields, `,`), strings.Join(pk, ` AND `))
+	fmt.Println(qry)
+	fmt.Println(qVals)
+	var err error
+	if dbType == "db" {
+		_, err = Db.(*sql.DB).Exec(qry, qVals...)
+	} else {
+		_, err = Db.(*sql.Tx).Exec(qry, qVals...)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Delete function deletes the structure based on the pk tag of the attribute
+func Delete(Db interface{}, table string, obj interface{}) error {
+	var dbType string
+	switch Db.(type) {
+	case *sql.DB:
+		dbType = "db"
+	case *sql.Tx:
+		dbType = "tx"
+	default:
+		panic("invalid db type struct")
+	}
+
+	t := reflect.TypeOf(obj)
+	v := reflect.ValueOf(obj)
+	num := t.NumField()
+
+	if num <= 0 {
+		return errors.New("obj has no properties")
+	}
+	// Create the query
+	pkName := ""
+	var pkVal int64
+
+	for i := 0; i <= num-1; i++ {
+		fType := t.Field(i)
+		fVal := v.Field(i)
+
+		if len(fType.Tag.Get("pk")) > 0 {
+			pkName = fType.Tag.Get("db")
+			pkVal = fVal.Interface().(int64)
+			break
+		}
+	}
+	if pkName == "" {
+		return errors.New("unable to find a primary key")
+	}
+	qry := fmt.Sprintf(`DELETE FROM %s WHERE "%s" = $1`, table, pkName)
+	var err error
+	if dbType == "db" {
+		_, err = Db.(*sql.DB).Exec(qry, pkVal)
+	} else {
+		_, err = Db.(*sql.Tx).Exec(qry, pkVal)
+	}
+	if err != nil {
+		return err
+	}
+	return nil
 }

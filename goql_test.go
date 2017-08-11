@@ -8,7 +8,7 @@ import (
 type User struct {
 	ID       int64  `db:"id_user" pk:"true"`
 	Username string `db:"username"`
-	password string `db:"password"`
+	Password string `db:"password"`
 	Email    string
 	Total    string `db:"total" sql:"COUNT(col)"`
 }
