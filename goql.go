@@ -47,6 +47,7 @@ func (qb *QueryBuilder) Select(col interface{}) (ret *QueryBuilder) {
 	case reflect.Struct:
 		// Passed in a a structure
 		t := reflect.TypeOf(col)
+		qb.From(qb.guessTableNameFromStruct(t.Name()))
 		cols := []string{}
 		// Loops all fields
 		for i := 0; i <= t.NumField()-1; i++ {
@@ -81,6 +82,10 @@ func (qb *QueryBuilder) Select(col interface{}) (ret *QueryBuilder) {
 		panic("Unsupported interface passed")
 	}
 	return
+}
+
+func (qb *QueryBuilder) guessTableNameFromStruct(name string) string {
+	return strings.ToLower(name)
 }
 
 // From tells the compiler where to load the results from (table name)

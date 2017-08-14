@@ -38,6 +38,19 @@ func TestSelectWithStructWhenUsingDbTag(t *testing.T) {
 	}
 }
 
+func testSelectWhenGuessingTableName(t *testing.T) {
+	expected := `SELECT "id_user","username","password","total" FROM user`
+	user := User{}
+	qb := QueryBuilder{}
+	qb.IgnoreDynamic = true
+	qb.Select(user)
+	qb.Build()
+
+	if strings.Trim(qb.Sql, " ") != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, qb.Sql)
+	}
+}
+
 func TestSelectWithoutIgnoringDynamic(t *testing.T) {
 	expected := `SELECT "id_user","username","password",(COUNT(col)) "total" FROM users`
 	user := User{}
