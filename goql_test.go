@@ -61,3 +61,43 @@ func TestSelectWithoutInvalidStructAsArg(t *testing.T) {
 	qb.Build()
 	t.Error("Expected to panic")
 }
+
+func TestSimpleWhere(t *testing.T) {
+	expected := `SELECT user FROM users WHERE id = $?`
+	qb := QueryBuilder{}
+	qb.Select("user").From("users").Where("id = $?")
+	qb.Build()
+	if strings.Trim(qb.Sql, " ") != expected {
+		t.Error("Expected: ", expected, " Got: ", qb.Sql)
+	}
+}
+
+func TestMultipleWhere(t *testing.T) {
+	expected := `SELECT user FROM users WHERE user = 'user' AND password = 'secret'`
+	qb := QueryBuilder{}
+	qb.Select("user").From("users").Where("user = 'user'").Where("password = 'secret'")
+	qb.Build()
+	if strings.Trim(qb.Sql, " ") != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, qb.Sql)
+	}
+}
+
+func TestSimpleInnerJoin(t *testing.T) {
+	expected := `SELECT user FROM users INNER JOIN config USING(id)`
+	qb := QueryBuilder{}
+	qb.Select("user").From("users").InnerJoin("config USING(id)")
+	qb.Build()
+	if strings.Trim(qb.Sql, " ") != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, qb.Sql)
+	}
+}
+
+func TestMulipleInnerJoin(t *testing.T) {
+	expected := `SELECT user FROM users INNER JOIN config USING(id) INNER JOIN other USING(other_id)`
+	qb := QueryBuilder{}
+	qb.Select("user").From("users").InnerJoin("config USING(id)").InnerJoin("other USING(other_id)")
+	qb.Build()
+	if strings.Trim(qb.Sql, " ") != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, qb.Sql)
+	}
+}
