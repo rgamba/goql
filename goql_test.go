@@ -180,3 +180,26 @@ func TestUpdate(t *testing.T) {
 		t.Errorf("Expected 'NewPassword' got '%s'", password)
 	}
 }
+
+func TestDelete(t *testing.T) {
+	db := dbSetup()
+	defer db.Close()
+
+	db.Exec(`INSERT INTO user(username, password) VALUES('john', 'doe')`)
+	newuser := User{ID: 1, Username: "NewUser", Password: "NewPassword"}
+	result, err := Delete(db, "user", newuser)
+	if err != nil {
+		t.Error(err)
+	}
+	if rows, _ := result.RowsAffected(); rows <= 0 {
+		t.Error("No rows affected by the delete")
+	}
+	var total int
+	err = db.QueryRow("SELECT COUNT(*) FROM user WHERE id = 1").Scan(&total)
+	if err != nil {
+		t.Error(err)
+	}
+	if total > 0 {
+		t.Error("Delete didn't delete the row")
+	}
+}

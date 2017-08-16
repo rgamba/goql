@@ -410,26 +410,23 @@ func Update(Db interface{}, table string, obj interface{}) (sql.Result, error) {
 }
 
 // Delete function deletes the structure based on the pk tag of the attribute
-func Delete(Db interface{}, table string, obj interface{}) error {
+func Delete(Db interface{}, table string, obj interface{}) (sql.Result, error) {
 	dbType := getDbType(Db)
 
 	queryInfo, err := creatQueryStructInfo(obj)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if len(queryInfo.PrimaryKeyQuery) <= 0 {
-		return errors.New("There is no primary key in the structure")
+		return nil, errors.New("There is no primary key in the structure")
 	}
-	qry := fmt.Sprintf(`DELETE FROM %s WHERE (%s)`, table, strings.Join(queryInfo.Positions, ","))
+	qry := fmt.Sprintf(`DELETE FROM %s WHERE (%s)`, table, strings.Join(queryInfo.PrimaryKeyQuery, ","))
 
 	if dbType == dbTypeDb {
-		_, err = Db.(*sql.DB).Exec(qry, queryInfo.PrimaryKeyValues...)
-	} else {
-		_, err = Db.(*sql.Tx).Exec(qry, queryInfo.PrimaryKeyValues...)
+		return Db.(*sql.DB).Exec(qry, queryInfo.PrimaryKeyValues...)
 	}
-
-	return err
+	return Db.(*sql.Tx).Exec(qry, queryInfo.PrimaryKeyValues...)
 }
 
 // Helpers
