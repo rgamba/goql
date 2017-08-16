@@ -1,8 +1,12 @@
 package goql
 
 import (
+	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type User struct {
@@ -11,6 +15,21 @@ type User struct {
 	Password string `db:"password"`
 	Email    string
 	Total    string `db:"total" sql:"COUNT(col)"`
+}
+
+func dbSetup() *sql.DB {
+	Testing = true
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		fmt.Printf("%s", err)
+	}
+	db.Exec(`
+		CREATE TABLE user(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username CHAR(255),
+			password CHAR(255)
+		)`)
+	return db
 }
 
 func TestSelectWhenPassedString(t *testing.T) {
@@ -112,5 +131,15 @@ func TestMulipleInnerJoin(t *testing.T) {
 	qb.Build()
 	if strings.Trim(qb.Sql, " ") != expected {
 		t.Errorf("Expected:\n%s\nGot:\n%s", expected, qb.Sql)
+	}
+}
+
+func TestInsert(t *testing.T) {
+	db := dbSetup()
+	defer db.Close()
+	newuser := User{Username: "test", Password: "123"}
+	_, err := Insert(db, "user", newuser)
+	if err != nil {
+		t.Error("Insert error: ", err)
 	}
 }

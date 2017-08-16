@@ -12,6 +12,12 @@ import (
 	"database/sql"
 )
 
+// Testing is a simple testing flag.
+var Testing = false
+
+const dbTypeDb = "db"
+const dbTypeTx = "tx"
+
 // QueryBuilder is the main structure.
 type QueryBuilder struct {
 	Sql string
@@ -199,7 +205,7 @@ func (qb *QueryBuilder) replaceWhereValues() {
 	vals := qb.GetValues()
 	if len(vals) > 0 {
 		for i := range vals {
-			qb.Sql = strings.Replace(qb.Sql, "$?", fmt.Sprintf("$%d", i+1), 1)
+			qb.Sql = strings.Replace(qb.Sql, getPlaceholder(), getPlaceholderWithCounter(i+1), 1)
 		}
 	}
 }
@@ -345,34 +351,154 @@ func GetFieldPointers(obj interface{}) []interface{} {
 	return fields
 }
 
+// QueryStructInfo represents a parsed information that
+// holds metadata of the object after parsing tags, position of
+// each field and actual values of the structure in each field.
+type QueryStructInfo struct {
+	Positions        []string
+	Fields           []string
+	Values           []interface{}
+	PrimaryKeys      string
+	PrimaryKeyQuery  []string
+	PrimaryKeyValues []interface{}
+}
+
 // Insert inserts a new record in a table
 // The fields in the structure obj must be added the
 // "db" tag in the declaration of the structure
 func Insert(Db interface{}, table string, obj interface{}) (pks interface{}, err error) {
-	var dbType string
+	dbType := getDbType(Db)
+
+	queryInfo, err := creatQueryStructInfo(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build the query
+	qry := fmt.Sprintf(`INSERT INTO %s ("%s") VALUES(%s)`, table, strings.Join(queryInfo.Fields, `","`), strings.Join(queryInfo.Positions, ","))
+	err = nil
+	if len(queryInfo.PrimaryKeys) > 0 && !Testing {
+		qry += fmt.Sprintf(` RETURNING "%s"`, queryInfo.PrimaryKeys)
+		if dbType == dbTypeDb {
+			err = Db.(*sql.DB).QueryRow(qry, queryInfo.Values...).Scan(&pks)
+		} else {
+			err = Db.(*sql.Tx).QueryRow(qry, queryInfo.Values...).Scan(&pks)
+		}
+
+	} else {
+		if dbType == dbTypeDb {
+			_, err = Db.(*sql.DB).Exec(qry, queryInfo.Values...)
+		} else {
+			_, err = Db.(*sql.Tx).Exec(qry, queryInfo.Values...)
+		}
+
+	}
+	// Validate the result
+	if err != nil {
+		return nil, err
+	}
+	return pks, nil
+}
+
+// Update updates a record. Note that this only works for atomic updates
+// and not for massive updates. The field with primary tag will serve as
+// update reference, in case there is no field with primary, the update will fail
+func Update(Db interface{}, table string, obj interface{}) error {
+	dbType := getDbType(Db)
+
+	queryInfo, err := creatQueryStructInfo(obj)
+	if err != nil {
+		return err
+	}
+
+	if len(queryInfo.PrimaryKeyQuery) <= 0 {
+		return errors.New("there is no primary key in the structure")
+	}
+
+	// Build the query
+	qry := fmt.Sprintf(`UPDATE %s SET %s WHERE (%s)`, table, strings.Join(queryInfo.Fields, `,`), strings.Join(queryInfo.PrimaryKeyQuery, ` AND `))
+	if dbType == dbTypeDb {
+		_, err = Db.(*sql.DB).Exec(qry, queryInfo.Values...)
+	} else {
+		_, err = Db.(*sql.Tx).Exec(qry, queryInfo.Values...)
+	}
+
+	return err
+}
+
+// Delete function deletes the structure based on the pk tag of the attribute
+func Delete(Db interface{}, table string, obj interface{}) error {
+	dbType := getDbType(Db)
+
+	queryInfo, err := creatQueryStructInfo(obj)
+	if err != nil {
+		return err
+	}
+
+	if len(queryInfo.PrimaryKeyQuery) <= 0 {
+		return errors.New("There is no primary key in the structure")
+	}
+	qry := fmt.Sprintf(`DELETE FROM %s WHERE (%s)`, table, strings.Join(queryInfo.Positions, ","))
+
+	if dbType == dbTypeDb {
+		_, err = Db.(*sql.DB).Exec(qry, queryInfo.PrimaryKeyValues...)
+	} else {
+		_, err = Db.(*sql.Tx).Exec(qry, queryInfo.PrimaryKeyValues...)
+	}
+
+	return err
+}
+
+// Helpers
+
+func reduceEmptyElements(items []string) []string {
+	result := []string{}
+	for _, text := range items {
+		if strings.Trim(text, " ") != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func getPlaceholderWithCounter(i int) string {
+	if Testing {
+		return "?"
+	}
+	return fmt.Sprintf("$%d", i)
+}
+
+func getPlaceholder() string {
+	if Testing {
+		return "?"
+	}
+	return "$?"
+}
+
+func getDbType(Db interface{}) string {
 	switch Db.(type) {
 	case *sql.DB:
-		dbType = "db"
+		return dbTypeDb
 	case *sql.Tx:
-		dbType = "tx"
+		return dbTypeTx
 	default:
 		panic("invalid db type struct")
 	}
+}
+
+func creatQueryStructInfo(obj interface{}) (*QueryStructInfo, error) {
+	result := QueryStructInfo{}
 
 	t := reflect.TypeOf(obj)
 	v := reflect.ValueOf(obj)
 	num := t.NumField()
+	var err error
 
 	if num <= 0 {
 		return nil, errors.New("obj has no properties")
 	}
-	// Create the query
-	qFields := []string{}
-	qNums := []string{}
-	qVals := []interface{}{}
-	j := 1
-	pk := ""
 
+	j := 1
 	for i := 0; i <= num-1; i++ {
 		fType := t.Field(i)
 		fVal := v.Field(i)
@@ -381,7 +507,9 @@ func Insert(Db interface{}, table string, obj interface{}) (pks interface{}, err
 			continue
 		}
 		if len(fType.Tag.Get("pk")) > 0 {
-			pk = fType.Tag.Get("db")
+			result.PrimaryKeyQuery = append(result.PrimaryKeyQuery, fmt.Sprintf(`"%s" = $%d`, fType.Tag.Get("db"), j))
+			result.PrimaryKeys = fType.Tag.Get("db")
+			result.PrimaryKeyValues = append(result.PrimaryKeyValues, fVal.Interface())
 			continue
 		}
 		// Check for the database field tag
@@ -409,184 +537,12 @@ func Insert(Db interface{}, table string, obj interface{}) (pks interface{}, err
 		default:
 			appendVal = fVal.Interface()
 		}
-		qVals = append(qVals, appendVal)
-		qFields = append(qFields, fType.Tag.Get("db"))
+		result.Values = append(result.Values, appendVal)
+		result.Fields = append(result.Fields, fType.Tag.Get("db"))
 
-		qNums = append(qNums, fmt.Sprintf("$%d", j))
-		j++
-	}
-	// Build the query
-	qry := fmt.Sprintf(`INSERT INTO %s ("%s") VALUES(%s)`, table, strings.Join(qFields, `","`), strings.Join(qNums, ","))
-	err = nil
-	if len(pk) > 0 {
-		qry += fmt.Sprintf(` RETURNING "%s"`, pk)
-		fmt.Println(qry)
-		fmt.Println(qVals...)
-		if dbType == "db" {
-			err = Db.(*sql.DB).QueryRow(qry, qVals...).Scan(&pks)
-		} else {
-			err = Db.(*sql.Tx).QueryRow(qry, qVals...).Scan(&pks)
-		}
-
-	} else {
-		if dbType == "db" {
-			_, err = Db.(*sql.DB).Exec(qry, qVals...)
-		} else {
-			_, err = Db.(*sql.Tx).Exec(qry, qVals...)
-		}
-
-	}
-	// Validate the result
-	if err != nil {
-		return nil, err
-	}
-	return pks, nil
-}
-
-// Update updates a record. Note that this only works for atomic updates
-// and not for massive updates. The field with primary tag will serve as
-// update reference, in case there is no field with primary, the update will fail
-func Update(Db interface{}, table string, obj interface{}) error {
-	var dbType string
-	switch Db.(type) {
-	case *sql.DB:
-		dbType = "db"
-	case *sql.Tx:
-		dbType = "tx"
-	default:
-		panic("invalid db type struct")
-	}
-
-	t := reflect.TypeOf(obj)
-	v := reflect.ValueOf(obj)
-	num := t.NumField()
-
-	if num <= 0 {
-		return errors.New("obj has no properties")
-	}
-	// Create the query
-	qFields := []string{}
-	qVals := []interface{}{}
-	j := 1
-	pk := []string{}
-
-	for i := 0; i <= num-1; i++ {
-		fType := t.Field(i)
-		fVal := v.Field(i)
-		// Check for the database field tag
-		if len(fType.Tag.Get("db")) <= 0 {
-			continue
-		}
-		// Check if the field is calculated
-		if len(fType.Tag.Get("sql")) > 0 {
-			continue
-		}
-		if len(fType.Tag.Get("pk")) > 0 {
-			pk = append(pk, fmt.Sprintf(`"%s" = $%d`, fType.Tag.Get("db"), j))
-		} else {
-			qFields = append(qFields, fmt.Sprintf(`"%s" = $%d`, fType.Tag.Get("db"), j))
-		}
-
-		// Special tags
-		var appendVal interface{}
-		switch fType.Tag.Get("type") {
-		case "time":
-			tme, ok := fVal.Interface().(time.Time)
-			if ok {
-				appendVal = tme.Format("15:04:05")
-			}
-		case "json":
-			m, err := json.Marshal(fVal.Interface())
-			if err == nil {
-				appendVal = m
-			}
-		default:
-			appendVal = fVal.Interface()
-		}
-
-		qVals = append(qVals, appendVal)
+		result.Positions = append(result.Positions, getPlaceholderWithCounter(j))
 		j++
 	}
 
-	if len(pk) <= 0 {
-		return errors.New("there is no primary key in the structure")
-	}
-
-	// Build the query
-	qry := fmt.Sprintf(`UPDATE %s SET %s WHERE (%s)`, table, strings.Join(qFields, `,`), strings.Join(pk, ` AND `))
-	fmt.Println(qry)
-	fmt.Println(qVals)
-	var err error
-	if dbType == "db" {
-		_, err = Db.(*sql.DB).Exec(qry, qVals...)
-	} else {
-		_, err = Db.(*sql.Tx).Exec(qry, qVals...)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Delete function deletes the structure based on the pk tag of the attribute
-func Delete(Db interface{}, table string, obj interface{}) error {
-	var dbType string
-	switch Db.(type) {
-	case *sql.DB:
-		dbType = "db"
-	case *sql.Tx:
-		dbType = "tx"
-	default:
-		panic("invalid db type struct")
-	}
-
-	t := reflect.TypeOf(obj)
-	v := reflect.ValueOf(obj)
-	num := t.NumField()
-
-	if num <= 0 {
-		return errors.New("obj has no properties")
-	}
-	// Create the query
-	pkName := ""
-	var pkVal int64
-
-	for i := 0; i <= num-1; i++ {
-		fType := t.Field(i)
-		fVal := v.Field(i)
-
-		if len(fType.Tag.Get("pk")) > 0 {
-			pkName = fType.Tag.Get("db")
-			pkVal = fVal.Interface().(int64)
-			break
-		}
-	}
-	if pkName == "" {
-		return errors.New("unable to find a primary key")
-	}
-	qry := fmt.Sprintf(`DELETE FROM %s WHERE "%s" = $1`, table, pkName)
-	var err error
-	if dbType == "db" {
-		_, err = Db.(*sql.DB).Exec(qry, pkVal)
-	} else {
-		_, err = Db.(*sql.Tx).Exec(qry, pkVal)
-	}
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// Helpers
-
-func reduceEmptyElements(items []string) []string {
-	result := []string{}
-	for _, text := range items {
-		if strings.Trim(text, " ") != "" {
-			result = append(result, text)
-		}
-	}
-	return result
+	return &result, nil
 }
