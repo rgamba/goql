@@ -10,7 +10,7 @@ import (
 )
 
 type User struct {
-	ID       int64  `db:"id_user" pk:"true"`
+	ID       int64  `db:"id" pk:"true"`
 	Username string `db:"username"`
 	Password string `db:"password"`
 	Email    string
@@ -33,10 +33,10 @@ func dbSetup() *sql.DB {
 }
 
 func TestSelectWhenPassedString(t *testing.T) {
-	expected := `SELECT id_user FROM mytable`
+	expected := `SELECT id FROM mytable`
 	qb := QueryBuilder{}
 	qb.IgnoreDynamic = true
-	qb.Select("id_user").From("mytable")
+	qb.Select("id").From("mytable")
 	qb.Build()
 
 	if strings.Trim(qb.Sql, " ") != expected {
@@ -45,7 +45,7 @@ func TestSelectWhenPassedString(t *testing.T) {
 }
 
 func TestSelectWithStructWhenUsingDbTag(t *testing.T) {
-	expected := `SELECT "id_user","username","password","total" FROM users`
+	expected := `SELECT "id","username","password","total" FROM users`
 	user := User{}
 	qb := QueryBuilder{}
 	qb.IgnoreDynamic = true
@@ -58,7 +58,7 @@ func TestSelectWithStructWhenUsingDbTag(t *testing.T) {
 }
 
 func testSelectWhenGuessingTableName(t *testing.T) {
-	expected := `SELECT "id_user","username","password","total" FROM user`
+	expected := `SELECT "id","username","password","total" FROM user`
 	user := User{}
 	qb := QueryBuilder{}
 	qb.IgnoreDynamic = true
@@ -71,7 +71,7 @@ func testSelectWhenGuessingTableName(t *testing.T) {
 }
 
 func TestSelectWithoutIgnoringDynamic(t *testing.T) {
-	expected := `SELECT "id_user","username","password",(COUNT(col)) "total" FROM users`
+	expected := `SELECT "id","username","password",(COUNT(col)) "total" FROM users`
 	user := User{}
 	qb := QueryBuilder{}
 	qb.Select(user).From("users")
@@ -138,8 +138,45 @@ func TestInsert(t *testing.T) {
 	db := dbSetup()
 	defer db.Close()
 	newuser := User{Username: "test", Password: "123"}
-	_, err := Insert(db, "user", newuser)
+	result, err := Insert(db, "user", newuser)
 	if err != nil {
 		t.Error("Insert error: ", err)
+	}
+	if rows, _ := result.RowsAffected(); rows <= 0 {
+		t.Error("Insert didn't product any affected rows")
+	}
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM user").Scan(&count)
+	if err != nil {
+		t.Error(err)
+	}
+	if count != 1 {
+		t.Error("Expected 1 row, got", count)
+	}
+}
+
+func TestUpdate(t *testing.T) {
+	db := dbSetup()
+	defer db.Close()
+
+	db.Exec(`INSERT INTO user(username, password) VALUES('john', 'doe')`)
+	newuser := User{ID: 1, Username: "NewUser", Password: "NewPassword"}
+	result, err := Update(db, "user", newuser)
+	if err != nil {
+		t.Error(err)
+	}
+	if rows, _ := result.RowsAffected(); rows <= 0 {
+		t.Error("No rows affected by the update")
+	}
+	var user, password string
+	err = db.QueryRow("SELECT username, password FROM user WHERE id = 1").Scan(&user, &password)
+	if err != nil {
+		t.Error(err)
+	}
+	if user != "NewUser" {
+		t.Errorf("Expected 'NewUser' got '%s'", user)
+	}
+	if password != "NewPassword" {
+		t.Errorf("Expected 'NewPassword' got '%s'", password)
 	}
 }
